@@ -1,0 +1,236 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ENPM818N - Network (VPC, suibnets, NAT) for class group project (Group 5) a custom VPC with public/private subnets, InternetGateway, NAT, and security groups for EC2 and RDS.
+  All resources are tagged with enpm818n- prefix.
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+    Description: Prefix used in Export names
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.20.0.0/24
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.20.1.0/24
+  AppSubnet1Cidr:
+    Type: String
+    Default: 10.20.10.0/24
+  AppSubnet2Cidr:
+    Type: String
+    Default: 10.20.11.0/24
+  DbSubnet1Cidr:
+    Type: String
+    Default: 10.20.20.0/24
+  DbSubnet2Cidr:
+    Type: String
+    Default: 10.20.21.0/24
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AZ1: a
+      AZ2: b
+
+Resources:
+
+  #################
+  # VPC, IGW, NAT #
+  #################
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-vpc' }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-internet-gateway' }]
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NAT:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-nat-gateway' }]
+
+
+  ###########
+  # Subnets #
+  ###########
+
+  # Public Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Join ['', [ !Ref 'AWS::Region', !FindInMap [RegionMap, !Ref 'AWS::Region', 'AZ1'] ]]
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-public-1' }]
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Join ['', [ !Ref 'AWS::Region', !FindInMap [RegionMap, !Ref 'AWS::Region', 'AZ2'] ]]
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-public-2' }]
+
+  # App Subnets
+  AppSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Join ['', [ !Ref 'AWS::Region', !FindInMap [RegionMap, !Ref 'AWS::Region', 'AZ1'] ]]
+      CidrBlock: !Ref AppSubnet1Cidr
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-app-1' }]
+
+  AppSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Join ['', [ !Ref 'AWS::Region', !FindInMap [RegionMap, !Ref 'AWS::Region', 'AZ2'] ]]
+      CidrBlock: !Ref AppSubnet2Cidr
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-app-2' }]
+
+  # Database Subnets
+  DbSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Join ['', [ !Ref 'AWS::Region', !FindInMap [RegionMap, !Ref 'AWS::Region', 'AZ1'] ]]
+      CidrBlock: !Ref DbSubnet1Cidr
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-db-1' }]
+
+  DbSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Join ['', [ !Ref 'AWS::Region', !FindInMap [RegionMap, !Ref 'AWS::Region', 'AZ2'] ]]
+      CidrBlock: !Ref DbSubnet2Cidr
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-db-2' }]
+
+
+  ########################################
+  # Routing Tables, Routes, Associations #
+  ########################################
+
+  # Public
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-public-route-table' }]
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+    DependsOn: InternetGatewayAttachment
+
+  PublicRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # App
+  AppRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-app-route-table' }]
+
+  AppRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AppRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NAT
+
+  AppRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AppSubnet1
+      RouteTableId: !Ref AppRouteTable
+
+  AppRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AppSubnet2
+      RouteTableId: !Ref AppRouteTable
+
+  # Database
+  DbRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-db-route-table' }]
+
+  DbRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DbSubnet1
+      RouteTableId: !Ref DbRouteTable
+
+  DbRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DbSubnet2
+      RouteTableId: !Ref DbRouteTable
+
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${StackNamePrefix}-VpcId'
+  PublicSubnetIds:
+    Value: !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub '${StackNamePrefix}-PublicSubnetIds'
+  AppSubnetIds:
+    Value: !Join [',', [!Ref AppSubnet1, !Ref AppSubnet2]]
+    Export:
+      Name: !Sub '${StackNamePrefix}-AppSubnetIds'
+  DbSubnetIds:
+    Value: !Join [',', [!Ref DbSubnet1, !Ref DbSubnet2]]
+    Export:
+      Name: !Sub '${StackNamePrefix}-DbSubnetIds'
+  VpcCidrOut:
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub '${StackNamePrefix}-VpcCidr'
