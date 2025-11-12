@@ -1,0 +1,76 @@
+#!/bin/bash
+
+set -e
+
+# Variables
+REPO_ROOT=$(git rev-parse --show-toplevel)
+REGION="us-east-1"
+CAPABILITIES="CAPABILITY_NAMED_IAM"
+SCRIPTS_DIR="$REPO_ROOT/scripts"
+
+# Parameters:
+#   $1. Path to template file
+function validate_stack {
+    TEMPLATE_FILE=$1
+    echo "Validating CloudFormation template: $TEMPLATE_FILE"
+    cfn-lint --template $TEMPLATE_FILE
+
+    # Alternatively, you can use the following, but it prints the formatted template
+    # aws cloudformation validate-template --template-body file://$TEMPLATE_FILE
+}
+
+# Parameters:
+#   1. Stack name
+#   2. Region
+function print_outputs {
+    STACK_NAME=$1
+    echo "Stack outputs for $STACK_NAME"
+    aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION --query "Stacks[0].Outputs"
+}
+
+# Parameters:
+#   1. Stack name
+#   2. CloudFormation yaml file name
+function deploy_stack {
+    STACK_NAME=$1
+    TEMPLATE_FILE="$REPO_ROOT/templates/$2"
+
+    echo ""
+    echo "----------------------------------"
+    echo " Stack: $STACK_NAME"
+    echo " Template File: $TEMPLATE_FILE"
+    echo " Region: $REGION"
+    echo "----------------------------------"
+    echo ""
+
+    validate_stack $TEMPLATE_FILE
+
+    # Deploy stack
+    echo "Deploying stack: $STACK_NAME"
+    aws cloudformation deploy \
+        --stack-name $STACK_NAME \
+        --template-file $TEMPLATE_FILE \
+        --capabilities $CAPABILITIES \
+        --region $REGION
+    echo "Successfully deployed $STACK_NAME"
+
+    # Useful for debugging
+    # print_outputs $STACK_NAME $REGION
+}
+
+
+echo "========================"
+echo "  Deploying all stacks  "
+echo "========================"
+
+# This list should be in upward dependency order (network, then db, then app)
+
+deploy_stack "enpm818n-network" "network.yaml"
+# deploy_stack "enpm818n-database" "database.yaml"
+# deploy_stack "enpm818n-application" "application.yaml"
+
+echo ""
+echo "===================================="
+echo "  Successfully deployed all stacks  "
+echo "===================================="
+echo ""
