@@ -39,6 +39,8 @@ echo "======================="
 # delete_stack "enpm818n-database"
 delete_stack "enpm818n-network"
 
+delete_stack "enpm818n-image-builder"
+
 echo ""
 echo "=========================================="
 echo "     Successfully deleted all stacks      "

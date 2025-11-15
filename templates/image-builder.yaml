@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ENPM818N - EC2 Image Builder to create a Ubuntu AMI with preinstalled packages.
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+    Description: Prefix used for naming and tagging resources
+
+Resources:
+
+  ###########################################
+  # IAM Role for Image Builder EC2 instance #
+  ###########################################
+
+  ImageBuilderInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackNamePrefix}-imagebuilder-instance-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder
+      Tags:
+        - Key: Name
+          Value: !Sub '${StackNamePrefix}-imagebuilder-instance-role'
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${StackNamePrefix}-imagebuilder-instance-profile'
+      Roles:
+        - !Ref ImageBuilderInstanceRole
+
+  #################################
+  # Component to install packages #
+  #################################
+
+  ImageBuilderComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub '${StackNamePrefix}-install-packages'
+      Platform: Linux
+      Version: 1.0.0
+      Data: |
+        name: InstallPackages
+        description: Install packages
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallPackages
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - apt update -y
+                    - apt install -y apache2 php libapache2-mod-php php-mysql mariadb-server stress-ng ufw
+                    - systemctl enable apache2
+                    - systemctl stop mariadb
+                    - systemctl disable mariadb
+                    - echo 'DirectoryIndex index.php index.html index.cgi index.pl index.xhtml index.htm' | sudo tee /etc/apache2/mods-enabled/dir.conf
+                    - sudo systemctl restart apache2
+                    - sudo mv /var/www/html/index.html /var/www/html/index.html.bak
+                    - git clone https://github.com/edaviage/818N-E_Commerce_Application.git
+                    - sudo mv 818N-E_Commerce_Application/* /var/www/html
+
+  ####################################
+  # Image Recipe using latest Ubuntu #
+  ####################################
+
+  ImageBuilderRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Sub '${StackNamePrefix}-custom-ubuntu-ami'
+      Version: 1.0.0
+      ParentImage: arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-24-lts-x86/x.x.x
+      Components:
+        - ComponentArn: !Ref ImageBuilderComponent
+      Tags:
+        Name: !Sub '${StackNamePrefix}-recipe'
+
+  ################################
+  # Infrastructure Configuration #
+  ################################
+
+  ImageBuilderInfrastructureConfig:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub '${StackNamePrefix}-infra-config'
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      TerminateInstanceOnFailure: true
+      Tags:
+        Name: !Sub '${StackNamePrefix}-infra-config'
+
+  ####################################
+  # Minimal Distribution Configuration to set AMI Name
+  ####################################
+
+  ImageBuilderDistributionConfig:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Sub '${StackNamePrefix}-dist-config'
+      Distributions:
+        - Region: !Ref 'AWS::Region'
+          AmiDistributionConfiguration:
+            Name: !Sub '${StackNamePrefix}-custom-ubuntu-ami-{{ imagebuilder:buildDate }}'
+
+  #############################
+  # Image Pipeline (one-time) #
+  #############################
+
+  ImageBuilderPipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: !Sub '${StackNamePrefix}-pipeline'
+      ImageRecipeArn: !Ref ImageBuilderRecipe
+      InfrastructureConfigurationArn: !Ref ImageBuilderInfrastructureConfig
+      DistributionConfigurationArn: !Ref ImageBuilderDistributionConfig
+      Status: ENABLED
+      Tags:
+        Name: !Sub '${StackNamePrefix}-pipeline'
+
+Outputs:
+  ImageBuilderRecipeArn:
+    Description: ARN of the Image Recipe
+    Value: !Ref ImageBuilderRecipe
+  ImageBuilderPipelineArn:
+    Description: ARN of the Image Pipeline
+    Value: !Ref ImageBuilderPipeline
