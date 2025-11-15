@@ -63,6 +63,41 @@ echo "========================"
 echo "  Deploying all stacks  "
 echo "========================"
 
+# Make sure the Custom AMI Image ID exists.
+# If it doesn't, we need to deploy the image builder and generate that image.
+# TODO: "enpm818n-custom-ubuntu-ami" is the "${PREFIX}-${IMAGE_NAME}" that's used in the image builder template.
+#        We should create a local variable in this script and pass it as a parameter to the template.
+CUSTOM_UBUNTU_AMI_ID=$(aws ec2 describe-images \
+                        --owners self \
+                        --filters "Name=name,Values=enpm818n-custom-ubuntu-ami-*" \
+                        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+                        --output text)
+
+# This could probably be replaced with an AWS lambda function, but since this 
+# image is supposed to be static, let's just grab what should be the only image ID.
+if [[ "$CUSTOM_UBUNTU_AMI_ID" == "None" ]]; then
+    # Create and run the image builder
+    echo "Warning: Unable to find Custom AMI Image. Deploying image builder stack..."
+    deploy_stack "enpm818n-image-builder" "image-builder.yaml"
+    # TODO: aws command to wait for the image builder to complete
+    # TODO: aws command to run the image builder
+
+    # Get the new AMI ID
+    CUSTOM_UBUNTU_AMI_ID=$(aws ec2 describe-images \
+                            --owners self \
+                            --filters "Name=name,Values=enpm818n-custom-ubuntu-ami-*" \
+                            --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+                            --output text)
+    if [[ "$CUSTOM_UBUNTU_AMI_ID" == "None" ]]; then
+        echo "Fatal: Failed to create Custom AMI Image!"
+        exit 1
+    fi
+    echo "Successfully created Custom AMI Image, ID: $CUSTOM_UBUNTU_AMI_ID"
+
+else
+    echo "Found Custom AMI Image ID: $CUSTOM_UBUNTU_AMI_ID"
+fi
+
 # This list should be in upward dependency order (network, then db, then app)
 
 deploy_stack "enpm818n-network" "network.yaml"
