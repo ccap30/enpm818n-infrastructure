@@ -53,12 +53,20 @@ function deploy_stack {
 
     # Deploy stack
     echo "Deploying stack: $STACK_NAME"
-    aws cloudformation deploy \
+    if [[ "$PARAMETER_OVERRIDES" != "" ]]; then
+            aws cloudformation deploy \
         --stack-name $STACK_NAME \
         --template-file $TEMPLATE_FILE \
         --capabilities $CAPABILITIES \
         --region $REGION \
         --parameter-overrides $PARAMETER_OVERRIDES
+    else
+        aws cloudformation deploy \
+            --stack-name $STACK_NAME \
+            --template-file $TEMPLATE_FILE \
+            --capabilities $CAPABILITIES \
+            --region $REGION
+    fi
     echo "Successfully deployed $STACK_NAME"
 
     # Useful for debugging
