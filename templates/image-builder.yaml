@@ -67,9 +67,13 @@ Resources:
                     - systemctl disable mariadb
                     - echo 'DirectoryIndex index.php index.html index.cgi index.pl index.xhtml index.htm' | sudo tee /etc/apache2/mods-enabled/dir.conf
                     - sudo systemctl restart apache2
-                    - sudo mv /var/www/html/index.html /var/www/html/index.html.bak
+                    - sudo rm -f /var/www/html/index.html
                     - git clone https://github.com/edaviage/818N-E_Commerce_Application.git
                     - sudo mv 818N-E_Commerce_Application/* /var/www/html
+                    - sudo mkdir -p /var/www/html/health
+                    - echo '<?php http_response_code(200); echo "OK"; ?>' | sudo tee /var/www/html/health/index.php > /dev/null
+                    - sudo chown www-data:www-data /var/www/html/health/index.php
+                    - sudo chmod 644 /var/www/html/health/index.php
 
   ####################################
   # Image Recipe using latest Ubuntu #

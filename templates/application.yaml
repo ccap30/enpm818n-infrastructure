@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ENPM818N - Services (ALB + ASGs) for Microservices Demo (fixed Fn::Sub issues v2)
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+  CustomAmiId:
+    Type: AWS::EC2::Image::Id
+    Description: "AMI ID to use for EC2 instances"
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 KeyPair (required)
+    Default: "enpm818n-key-pair"
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  DesiredCapacity:
+    Type: Number
+    Default: 1
+  MaxCapacity:
+    Type: Number
+    Default: 3
+  # Required at runtime
+  DBEndpoint:
+    Type: String
+  DBName:
+    Type: String
+    Default: ecommerce_1
+  DBUsername:
+    Type: String
+    Default: appuser
+
+# TODO: Refine this to ONLY what's necessary
+Resources:
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic from ALB and to RDS
+      VpcId:
+        Fn::ImportValue: !Sub '${StackNamePrefix}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+        - IpProtocol: tcp  # TODO: Delete this
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-App-SG' }]
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB internet access
+      VpcId:
+        Fn::ImportValue: !Sub '${StackNamePrefix}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-ALB-SG' }]
+
+  AppEgressToDB:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      DestinationSecurityGroupId:
+        Fn::ImportValue: !Sub '${StackNamePrefix}-DBSecurityGroupId'
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${StackNamePrefix}-ALB'
+      Scheme: internet-facing
+      Subnets:
+        Fn::Split:
+          - ','
+          - Fn::ImportValue: !Sub '${StackNamePrefix}-PublicSubnetIds'
+      SecurityGroups: [!Ref AlbSecurityGroup]
+
+  FrontendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${StackNamePrefix}-VpcId'
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /health
+      Matcher: { HttpCode: '200-399' }
+
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref FrontendTargetGroup
+
+  RoleInstance:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadDBSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${StackNamePrefix}-db-credentials-*"
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-EC2Role' }]
+
+  ProfileInstance:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RoleInstance]
+
+  LaunchTemplateFrontend:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${StackNamePrefix}-lt-frontend'
+      LaunchTemplateData:
+        IamInstanceProfile: { Arn: !GetAtt ProfileInstance.Arn }
+        KeyName: !Ref KeyPairName
+        ImageId: !Ref CustomAmiId
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds: [!Ref AppSecurityGroup]
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euo pipefail
+            sudo apt update -y
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+            sudo apt install unzip
+            unzip /tmp/awscliv2.zip -d /tmp
+            sudo /tmp/aws/install
+            aws --version
+            export DB_ENDPOINT='${DBEndpoint}'
+            export DB_USER='${DBUsername}'
+            export DB_NAME='${DBName}'
+            
+            cat <<EOF > /var/www/html/includes/connect.php
+            <?php
+            \$db_host = "$DB_ENDPOINT";
+            \$db_user = "$DB_USER";
+            \$db_name = "$DB_NAME";
+            \$secretJson = shell_exec("aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text");
+            \$secret = json_decode(\$secretJson, true);
+            \$con = new mysqli(\$db_host, \$db_user, \$secret['password'], \$db_name);
+            if (!\$con) {
+                die(mysqli_error(\$con));
+            }
+            ?>
+            EOF
+
+            sudo systemctl restart apache2
+
+  FrontendAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        Fn::Split:
+          - ','
+          - Fn::ImportValue: !Sub '${StackNamePrefix}-AppSubnetIds'
+      MinSize: '1'
+      DesiredCapacity: !Ref DesiredCapacity
+      MaxSize: !Ref MaxCapacity
+      TargetGroupARNs: [!Ref FrontendTargetGroup]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateFrontend
+        Version: !GetAtt LaunchTemplateFrontend.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: !Sub '${StackNamePrefix}-frontend'
+          PropagateAtLaunch: true
+
+  ScalePolicyCPUFrontend:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref FrontendAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50
+
+Outputs:
+  ALBDNSName:
+    Description: Public URL for the app
+    Value: !GetAtt Alb.DNSName

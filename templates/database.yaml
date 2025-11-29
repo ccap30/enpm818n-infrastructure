@@ -8,10 +8,10 @@ Parameters:
     Default: enpm818n
   DBName:
     Type: String
-    Default: commerceDB
+    Default: ecommerce_1
   DBUsername:
     Type: String
-    Default: admin
+    Default: appuser
   EngineVersion:
     Type: String
     Default: "8.0"

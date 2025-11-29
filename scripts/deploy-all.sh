@@ -8,6 +8,11 @@ REGION="us-east-1"
 CAPABILITIES="CAPABILITY_NAMED_IAM"
 SCRIPTS_DIR="$REPO_ROOT/scripts"
 
+# SQL_KEY="ecommerce_1.sql"
+# SQL_S3_PATH="s3://${S3_BUCKET}/${SQL_KEY}"
+# REPO_URL="https://github.com/edaviage/818N-E_Commerce_Application"
+# 818N_REPO_CLONE="$REPO_ROOT/../818N-E_Commerce_Application"
+
 # Parameters:
 #   $1. Path to template file
 function validate_stack {
@@ -34,6 +39,7 @@ function print_outputs {
 function deploy_stack {
     STACK_NAME=$1
     TEMPLATE_FILE="$REPO_ROOT/templates/$2"
+    PARAMETER_OVERRIDES="$3"
 
     echo ""
     echo "----------------------------------"
@@ -51,7 +57,8 @@ function deploy_stack {
         --stack-name $STACK_NAME \
         --template-file $TEMPLATE_FILE \
         --capabilities $CAPABILITIES \
-        --region $REGION
+        --region $REGION \
+        --parameter-overrides $PARAMETER_OVERRIDES
     echo "Successfully deployed $STACK_NAME"
 
     # Useful for debugging
@@ -63,6 +70,12 @@ echo "========================"
 echo "  Deploying all stacks  "
 echo "========================"
 
+# Stacks should be in upward dependency order (network, then db, then app)
+
+
+#################
+# Image Builder #
+#################
 # Make sure the Custom AMI Image ID exists.
 # If it doesn't, we need to deploy the image builder and generate that image.
 # TODO: "enpm818n-custom-ubuntu-ami" is the "${PREFIX}-${IMAGE_NAME}" that's used in the image builder template.
@@ -76,11 +89,18 @@ CUSTOM_UBUNTU_AMI_ID=$(aws ec2 describe-images \
 # This could probably be replaced with an AWS lambda function, but since this 
 # image is supposed to be static, let's just grab what should be the only image ID.
 if [[ "$CUSTOM_UBUNTU_AMI_ID" == "None" ]]; then
-    # Create and run the image builder
+    # Deploy the image builder
+    IMAGE_BUILDER_STACK="enpm818n-image-builder"
     echo "Warning: Unable to find Custom AMI Image. Deploying image builder stack..."
-    deploy_stack "enpm818n-image-builder" "image-builder.yaml"
-    # TODO: aws command to wait for the image builder to complete
-    # TODO: aws command to run the image builder
+    deploy_stack $IMAGE_BUILDER_STACK "image-builder.yaml"
+
+    # Run the image builder pipeline
+    IMAGE_BUILDER_PIPELINE_ARN=$(aws cloudformation describe-stack-resources \
+        --stack-name $IMAGE_BUILDER_STACK \
+        --query "StackResources[?LogicalResourceId=='ImageBuilderPipeline'].PhysicalResourceId" \
+        --output text)
+    echo "Image builder pipeline ARN: $IMAGE_BUILDER_PIPELINE_ARN"
+    aws imagebuilder start-image-pipeline-execution --image-pipeline-arn $IMAGE_BUILDER_PIPELINE_ARN
 
     # Get the new AMI ID
     CUSTOM_UBUNTU_AMI_ID=$(aws ec2 describe-images \
@@ -89,6 +109,7 @@ if [[ "$CUSTOM_UBUNTU_AMI_ID" == "None" ]]; then
                             --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
                             --output text)
     if [[ "$CUSTOM_UBUNTU_AMI_ID" == "None" ]]; then
+        # TODO: This doesn't work. We can't fetch the AMI ID so quickly. Will have to wait until it's created.
         echo "Fatal: Failed to create Custom AMI Image!"
         exit 1
     fi
@@ -98,11 +119,46 @@ else
     echo "Found Custom AMI Image ID: $CUSTOM_UBUNTU_AMI_ID"
 fi
 
-# This list should be in upward dependency order (network, then db, then app)
 
+
+########################
+# Network and Database #
+########################
 deploy_stack "enpm818n-network" "network.yaml"
-# deploy_stack "enpm818n-database" "database.yaml"
-# deploy_stack "enpm818n-application" "application.yaml"
+deploy_stack "enpm818n-database" "database.yaml"
+
+
+
+##########################
+# E-commerce Application #
+##########################
+KEY_NAME="enpm818n-key-pair"
+KEY_FILE="$KEY_NAME.pem"
+if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" >/dev/null 2>&1; then
+    echo "Warning: Key pair '$KEY_NAME' does not exist. Creating it and saving it now..."
+    aws ec2 create-key-pair \
+        --key-name "$KEY_NAME" \
+        --key-type rsa \
+        --query 'KeyMaterial' \
+        --output text > "$KEY_FILE"
+    chmod 400 "$KEY_FILE"
+    echo "Info: Key pair '$KEY_NAME' created."
+else
+    echo "Key pair '$KEY_NAME' found!"
+    find . -iname "$KEY_FILE"
+fi
+
+DB_ENDPOINT=$(aws cloudformation describe-stacks \
+    --stack-name enpm818n-database \
+    --query "Stacks[0].Outputs[?OutputKey=='DBEndpoint'].OutputValue" \
+    --output text)
+
+echo "Using DB Endpoint: $DB_ENDPOINT"
+
+deploy_stack "enpm818n-application" "application.yaml" "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT"
+
+
+
 
 echo ""
 echo "===================================="
