@@ -218,7 +218,97 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: 50
 
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${StackNamePrefix}-WebACL'
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${StackNamePrefix}-WebACL'
+        SampledRequestsEnabled: true
+      Rules:
+        # SQL Injection Protection
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 1
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: SQLiRules
+            SampledRequestsEnabled: true
+
+        # Cross-Site Scripting Protection
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 2
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRules
+            SampledRequestsEnabled: true
+
+        # Rate Limit (Anti-DDoS)
+        - Name: RateLimit
+          Priority: 3
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: 1000
+              AggregateKeyType: IP
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: RateLimitRule
+            SampledRequestsEnabled: true
+
+  # WafLogGroup name must start with 'aws-waf-logs-'
+  # https://docs.aws.amazon.com/waf/latest/developerguide/logging-cw-logs.html
+  WafLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub 'aws-waf-logs-${StackNamePrefix}'
+      RetentionInDays: 7
+
+  WafLoggingConfiguration:
+    Type: AWS::WAFv2::LoggingConfiguration
+    Properties:
+      ResourceArn: !GetAtt WebACL.Arn
+      LogDestinationConfigs:
+        - !GetAtt WafLogGroup.Arn
+      # Monitor only blocked requests
+      LoggingFilter:
+        DefaultBehavior: DROP
+        Filters:
+          - Behavior: KEEP
+            Requirement: MEETS_ANY
+            Conditions:
+              - ActionCondition:
+                  Action: BLOCK
+
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: 
+        Fn::ImportValue: !Sub '${StackNamePrefix}-ALBArn'
+      WebACLArn: !GetAtt WebACL.Arn
+
 Outputs:
   ALBDNSName:
     Description: Public URL for the app
     Value: !GetAtt Alb.DNSName
+  ALBArn:
+    Description: ARN of the ALB
+    Value: !GetAtt Alb.LoadBalancerArn
+    Export:
+      Name: !Sub '${StackNamePrefix}-ALBArn'
+  LogGroupArn:
+    Value: !GetAtt WafLogGroup.Arn
