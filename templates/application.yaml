@@ -164,20 +164,28 @@ Resources:
             export DB_ENDPOINT='${DBEndpoint}'
             export DB_USER='${DBUsername}'
             export DB_NAME='${DBName}'
+            export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
             
             cat <<EOF > /var/www/html/includes/connect.php
             <?php
             \$db_host = "$DB_ENDPOINT";
             \$db_user = "$DB_USER";
             \$db_name = "$DB_NAME";
-            \$secretJson = shell_exec("aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text");
-            \$secret = json_decode(\$secretJson, true);
-            \$con = new mysqli(\$db_host, \$db_user, \$secret['password'], \$db_name);
+            \$db_pass = "$DB_PASS";
+            \$con = new mysqli(\$db_host, \$db_user, \$db_pass, \$db_name);
             if (!\$con) {
                 die(mysqli_error(\$con));
             }
             ?>
             EOF
+
+            TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
+            if [ "$TABLE_EXISTS" -eq 0 ]; then
+              echo "Initializing database."
+              mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
+            else
+              echo "Table already exists, skipping initialization."
+            fi
 
             sudo systemctl restart apache2
 
