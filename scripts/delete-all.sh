@@ -2,6 +2,13 @@
 
 set -e
 
+# TODO:
+# ./delete-all.sh           : Delete app, database, network
+# ./delete-all.sh builder   : Delete the image builder
+# ./delete-all.sh s3        : Delete the S3 bucket
+# ./delete-all.sh all       : Delete everything
+ALL_FLAG="$1"
+
 # Variables
 REPO_ROOT=$(git rev-parse --show-toplevel)
 REGION="us-east-1"
@@ -35,8 +42,8 @@ echo "  Deleting all stacks  "
 echo "======================="
 
 # This list should be in downward dependency order (app, then db, then network)
-# delete_stack "enpm818n-application"
-# delete_stack "enpm818n-database"
+delete_stack "enpm818n-application"
+delete_stack "enpm818n-database"
 delete_stack "enpm818n-network"
 
 delete_stack "enpm818n-image-builder"
