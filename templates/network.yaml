@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  ENPM818N - Network (VPC, subnets, NAT) for class group project (Group 5) a custom VPC with public/private subnets, InternetGateway, NAT, and security groups for EC2 and RDS.
-  All resources are tagged with enpm818n- prefix.
+  Network CloudFormation template for the Fall 2025 ENPM818N class group project (Group 5). This template defines a custom VPC with public/private subnets, an InternetGateway, and a NAT. All resources are tagged with "enpm818n" prefix.
 
 Parameters:
   StackNamePrefix:

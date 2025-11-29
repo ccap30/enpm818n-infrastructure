@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Database CloudFormation template for the Fall 2025 ENPM818N class group project (Group 5). This template defines an RDS and Secret to create the password. All resources are tagged with "enpm818n" prefix.
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+  DBName:
+    Type: String
+    Default: commerceDB
+  DBUsername:
+    Type: String
+    Default: admin
+  EngineVersion:
+    Type: String
+    Default: "8.0"
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  AllocatedStorage:
+    Type: Number
+    Default: "20"
+  MultiAZ:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  # TODO: This should be true when we test and deploy the production build
+
+Resources:
+
+  ##############################
+  # AWS Secrets Manager Secret #
+  ##############################
+
+  DBPasswordSecret:
+    Type: AWS::SecretsManager::Secret 
+    Properties:
+      Name: !Sub "${StackNamePrefix}-db-credentials"
+      Description: Master credentials for RDS
+      GenerateSecretString:
+        SecretStringTemplate: !Sub |
+          {
+            "username": "${DBUsername}"
+          }
+        GenerateStringKey: "password"
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+
+  ################################
+  # DB Security Group and Subnet #
+  ################################
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL from VPC
+      VpcId:
+        Fn::ImportValue: !Sub '${StackNamePrefix}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp:
+            Fn::ImportValue: !Sub '${StackNamePrefix}-VpcCidr'
+      Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-DB-SG' }]
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private DB subnets
+      SubnetIds:
+        Fn::Split:
+          - ','
+          - Fn::ImportValue: !Sub '${StackNamePrefix}-DbSubnetIds'
+      DBSubnetGroupName: !Sub '${StackNamePrefix}-dbsubnets'
+
+  ###################
+  # RDS DB Instance #
+  ###################
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref DBName
+      Engine: mysql
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword:
+        Fn::Sub: '{{resolve:secretsmanager:${DBPasswordSecret}::password}}'
+      VPCSecurityGroups: [!Ref DBSecurityGroup]
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: !Ref MultiAZ
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      DeletionProtection: false
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Delete
+
+Outputs:
+  DBEndpoint:
+    Value: !GetAtt DBInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${StackNamePrefix}-DBEndpoint'
+  DBPort:
+    Value: !GetAtt DBInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${StackNamePrefix}-DBPort'
+  DBSecurityGroupId:
+    Value: !Ref DBSecurityGroup
+    Export:
+      Name: !Sub '${StackNamePrefix}-DBSecurityGroupId'
