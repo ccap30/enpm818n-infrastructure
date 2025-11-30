@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3 Bucket for Static Assets + CloudFront Distribution with OAC
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+
+Resources:
+  #############
+  # S3 Bucket #
+  #############
+  StaticAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${StackNamePrefix}-static-assets-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ####################################
+  # Origin Access Control (CF -> S3) #
+  ####################################
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${StackNamePrefix}-assets-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  ###########################
+  # CloudFront Distribution #
+  ###########################
+  MyDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'CDN for ${StackNamePrefix} static assets'
+        PriceClass: PriceClass_100  # Cheap, NA/EU only
+        HttpVersion: http2
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt StaticAssetsBucket.DomainName
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true  # gzip compression
+
+  #############################################
+  # S3 Bucket Policy allowing CF Distribution #
+  #############################################
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticAssetsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${StaticAssetsBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${MyDistribution.Id}'
+
+Outputs:
+  DistributionDomainName:
+    Description: CloudFront URL
+    Value: !GetAtt MyDistribution.DomainName
+    Export:
+      Name: !Sub '${StackNamePrefix}-DistributionDomainName'
+  S3BucketName:
+    Description: S3 bucket name
+    Value: !Ref StaticAssetsBucket

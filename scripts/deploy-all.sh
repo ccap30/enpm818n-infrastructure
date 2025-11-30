@@ -11,7 +11,7 @@ SCRIPTS_DIR="$REPO_ROOT/scripts"
 # SQL_KEY="ecommerce_1.sql"
 # SQL_S3_PATH="s3://${S3_BUCKET}/${SQL_KEY}"
 # REPO_URL="https://github.com/edaviage/818N-E_Commerce_Application"
-# 818N_REPO_CLONE="$REPO_ROOT/../818N-E_Commerce_Application"
+WEB_APP_REPO="$REPO_ROOT/../818N-E_Commerce_Application"
 
 # Parameters:
 #   $1. Path to template file
@@ -26,7 +26,6 @@ function validate_stack {
 
 # Parameters:
 #   1. Stack name
-#   2. Region
 function print_outputs {
     STACK_NAME=$1
     echo "Stack outputs for $STACK_NAME"
@@ -36,6 +35,7 @@ function print_outputs {
 # Parameters:
 #   1. Stack name
 #   2. CloudFormation yaml file name
+#   3. Any parameter overrides key,value pairs
 function deploy_stack {
     STACK_NAME=$1
     TEMPLATE_FILE="$REPO_ROOT/templates/$2"
@@ -137,6 +137,32 @@ deploy_stack "enpm818n-database" "database.yaml"
 
 
 
+########################################
+# Sync S3 Bucket and Deploy CloudFront #
+########################################
+CLOUD_FRONT_STACK_NAME="enpm818n-cloudfront"
+# deploy_stack "$CLOUD_FRONT_STACK_NAME" "cloudfront.yaml"
+
+S3_BUCKET=$(aws cloudformation describe-stacks \
+    --stack-name $CLOUD_FRONT_STACK_NAME \
+    --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" \
+    --output text)
+
+CF_URL=$(aws cloudformation describe-stacks \
+    --stack-name $CLOUD_FRONT_STACK_NAME \
+    --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" \
+    --output text)
+
+echo "Syncing files (.png, .jpg, .js, .css) with the S3 bucket..."
+aws s3 sync "$WEB_APP_REPO" "s3://$S3_BUCKET" \
+    --exclude "*" \
+    --include "*.png" \
+    --include "*.jpg" \
+    --include "*.js" \
+    --include "*.css" \
+    --exact-timestamps \
+    --only-show-errors
+
 ##########################
 # E-commerce Application #
 ##########################
@@ -152,8 +178,7 @@ if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" >/dev/null 2>&1; then
     chmod 400 "$KEY_FILE"
     echo "Info: Key pair '$KEY_NAME' created."
 else
-    echo "Key pair '$KEY_NAME' found!"
-    find . -iname "$KEY_FILE"
+    echo "Using key pair: '$KEY_NAME'"
 fi
 
 DB_ENDPOINT=$(aws cloudformation describe-stacks \
@@ -161,10 +186,7 @@ DB_ENDPOINT=$(aws cloudformation describe-stacks \
     --query "Stacks[0].Outputs[?OutputKey=='DBEndpoint'].OutputValue" \
     --output text)
 
-echo "Using DB Endpoint: $DB_ENDPOINT"
-
-deploy_stack "enpm818n-application" "application.yaml" "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT"
-
+deploy_stack "enpm818n-application" "application.yaml" "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT CFEndpoint=$CF_URL"
 
 
 

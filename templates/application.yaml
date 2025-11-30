@@ -21,18 +21,26 @@ Parameters:
   MaxCapacity:
     Type: Number
     Default: 3
-  # Required at runtime
-  DBEndpoint:
-    Type: String
   DBName:
     Type: String
     Default: ecommerce_1
   DBUsername:
     Type: String
     Default: appuser
+  # Required at runtime
+  DBEndpoint:
+    Type: String
+  CFEndpoint:
+    Type: String
 
-# TODO: Refine this to ONLY what's necessary
 Resources:
+
+  #################################################
+  # Application and Load Balancer Security Groups #
+  #################################################
+  # TODO: Refine this to ONLY what's necessary
+
+  # Application
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -59,6 +67,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-App-SG' }]
 
+  # Load Balancer
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -72,6 +81,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-ALB-SG' }]
 
+  # Egress to Database
   AppEgressToDB:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -82,6 +92,10 @@ Resources:
       DestinationSecurityGroupId:
         Fn::ImportValue: !Sub '${StackNamePrefix}-DBSecurityGroupId'
 
+  #######################################################
+  # Load Balancer Configuration, Target Group, Listener #
+  #######################################################
+  # Application Load Balancer
   Alb:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -93,6 +107,7 @@ Resources:
           - Fn::ImportValue: !Sub '${StackNamePrefix}-PublicSubnetIds'
       SecurityGroups: [!Ref AlbSecurityGroup]
 
+  # Target Group
   FrontendTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -114,6 +129,9 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref FrontendTargetGroup
 
+  ######################################
+  # IAM Role (SSM and Secrets Manager) #
+  ######################################
   RoleInstance:
     Type: AWS::IAM::Role
     Properties:
@@ -141,6 +159,10 @@ Resources:
     Properties:
       Roles: [!Ref RoleInstance]
 
+
+  ############################
+  # Frontend Launch Template #
+  ############################
   LaunchTemplateFrontend:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -155,17 +177,20 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash
             set -euo pipefail
+            # TODO: Move this to the image builder
             sudo apt update -y
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
             sudo apt install unzip
             unzip /tmp/awscliv2.zip -d /tmp
             sudo /tmp/aws/install
-            aws --version
+
+            export CF_URL='${CFEndpoint}'
             export DB_ENDPOINT='${DBEndpoint}'
             export DB_USER='${DBUsername}'
             export DB_NAME='${DBName}'
             export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
             
+            # Set up connect.php
             cat <<EOF > /var/www/html/includes/connect.php
             <?php
             \$db_host = "$DB_ENDPOINT";
@@ -179,6 +204,8 @@ Resources:
             ?>
             EOF
 
+            # Initialize DB if empty
+            # TODO: Move to AWS Lambda
             TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
             if [ "$TABLE_EXISTS" -eq 0 ]; then
               echo "Initializing database."
@@ -187,8 +214,23 @@ Resources:
               echo "Table already exists, skipping initialization."
             fi
 
+            # Tell Apache to redirect static files to CloudFront
+            sudo a2enmod rewrite
+            APACHE_CONF="/etc/apache2/sites-available/000-default.conf"
+            LAST_LINE=$(wc -l < "$APACHE_CONF")
+            INSERT_LINE=$((LAST_LINE))
+            sudo sed -i "$INSERT_LINE i \\
+                    RewriteRule ^/(.*)$ https://$CF_URL/\\\$1 [R=302,L]" "$APACHE_CONF"
+            sudo sed -i "$INSERT_LINE i \\
+                    RewriteCond %{REQUEST_URI} \\\.(png|jpg|jpeg|js|css)$ [NC]" "$APACHE_CONF"
+            sudo sed -i "$INSERT_LINE i \\
+                    RewriteEngine On" "$APACHE_CONF"
+
             sudo systemctl restart apache2
 
+  ############################
+  # Autoscaling and Policies #
+  ############################
   FrontendAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
@@ -218,6 +260,11 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: 50
 
+  # TODO: Need a second policy. Memory usage?
+
+  ##################################
+  # Web Application Firewall (WAF) #
+  ##################################
   WebACL:
     Type: AWS::WAFv2::WebACL
     Properties:
@@ -270,8 +317,8 @@ Resources:
             MetricName: RateLimitRule
             SampledRequestsEnabled: true
 
-  # WafLogGroup name must start with 'aws-waf-logs-'
-  # https://docs.aws.amazon.com/waf/latest/developerguide/logging-cw-logs.html
+  # WAF Logging Configuration
+  # Name must start with 'aws-waf-logs-' https://docs.aws.amazon.com/waf/latest/developerguide/logging-cw-logs.html
   WafLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -284,8 +331,7 @@ Resources:
       ResourceArn: !GetAtt WebACL.Arn
       LogDestinationConfigs:
         - !GetAtt WafLogGroup.Arn
-      # Monitor only blocked requests
-      LoggingFilter:
+      LoggingFilter:  # Keep only blocked requests
         DefaultBehavior: DROP
         Filters:
           - Behavior: KEEP
@@ -297,18 +343,12 @@ Resources:
   WebACLAssociation:
     Type: AWS::WAFv2::WebACLAssociation
     Properties:
-      ResourceArn: 
-        Fn::ImportValue: !Sub '${StackNamePrefix}-ALBArn'
+      ResourceArn: !GetAtt Alb.LoadBalancerArn
       WebACLArn: !GetAtt WebACL.Arn
 
 Outputs:
   ALBDNSName:
     Description: Public URL for the app
     Value: !GetAtt Alb.DNSName
-  ALBArn:
-    Description: ARN of the ALB
-    Value: !GetAtt Alb.LoadBalancerArn
-    Export:
-      Name: !Sub '${StackNamePrefix}-ALBArn'
   LogGroupArn:
     Value: !GetAtt WafLogGroup.Arn
