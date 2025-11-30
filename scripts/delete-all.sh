@@ -43,6 +43,7 @@ echo "======================="
 
 # This list should be in downward dependency order (app, then db, then network)
 delete_stack "enpm818n-application"
+deploy_stack "enpm818n-cloudfront"
 delete_stack "enpm818n-database"
 delete_stack "enpm818n-network"
 

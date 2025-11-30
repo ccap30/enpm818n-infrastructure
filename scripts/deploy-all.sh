@@ -74,6 +74,15 @@ function deploy_stack {
 }
 
 
+echo "There are prerequiste steps required before deploying the stacks."
+echo "This should be done on AWS. We have not automated these steps."
+echo " - Set up a Route 53 domain"
+echo " - Create a certificate with the Certificate Manager"
+echo " - Add certificate record to the domain"
+echo ""
+echo "Sleeping for 10 seconds so you can read this. Press 'CTRL + C' now to stop deployment."
+sleep 10
+
 echo "========================"
 echo "  Deploying all stacks  "
 echo "========================"
@@ -186,7 +195,13 @@ DB_ENDPOINT=$(aws cloudformation describe-stacks \
     --query "Stacks[0].Outputs[?OutputKey=='DBEndpoint'].OutputValue" \
     --output text)
 
-deploy_stack "enpm818n-application" "application.yaml" "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT CFEndpoint=$CF_URL"
+ACM_CERT=$(aws acm list-certificates \
+    --query "CertificateSummaryList[?DomainName=='carl-aws.com'].CertificateArn" \
+    --output text)
+
+deploy_stack "enpm818n-application" \
+    "application.yaml" \
+    "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT CFEndpoint=$CF_URL AcmCertificateArn=$ACM_CERT"
 
 
 
