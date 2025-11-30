@@ -241,7 +241,10 @@ Resources:
             export DB_ENDPOINT='${DBEndpoint}'
             export DB_USER='${DBUsername}'
             export DB_NAME='${DBName}'
+            # TODO: Put this on multiple lines
             export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
+
+            wget -P /var/www/html/includes https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
             
             # Set up connect.php
             cat <<EOF > /var/www/html/includes/connect.php
@@ -250,19 +253,26 @@ Resources:
             \$db_user = "$DB_USER";
             \$db_name = "$DB_NAME";
             \$db_pass = "$DB_PASS";
-            \$con = new mysqli(\$db_host, \$db_user, \$db_pass, \$db_name);
+            \$ssl_ca_path = '/var/www/html/includes/global-bundle.pem';
+            \$con = mysqli_init();
             if (!\$con) {
                 die(mysqli_error(\$con));
+            }
+            \$con->ssl_set(NULL, NULL, \$ssl_ca_path, NULL, NULL);
+            \$con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
+            if (!\$con->real_connect(\$db_host, \$db_user, \$db_pass, \$db_name)) {
+              die(mysqli_error(\$con));
             }
             ?>
             EOF
 
             # Initialize DB if empty
+            # TODO: Put these two commands on multiple lines
             # TODO: Move to AWS Lambda
-            TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
+            TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=global-bundle.pem --ssl-verify-server-cert -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
             if [ "$TABLE_EXISTS" -eq 0 ]; then
               echo "Initializing database."
-              mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
+              mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=global-bundle.pem --ssl-verify-server-cert ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
             else
               echo "Table already exists, skipping initialization."
             fi

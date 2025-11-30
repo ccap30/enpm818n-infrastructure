@@ -12,6 +12,9 @@ Parameters:
   DBUsername:
     Type: String
     Default: appuser
+  Engine:
+    Type: String
+    Default: mysql
   EngineVersion:
     Type: String
     Default: "8.0"
@@ -77,16 +80,24 @@ Resources:
           - Fn::ImportValue: !Sub '${StackNamePrefix}-DbSubnetIds'
       DBSubnetGroupName: !Sub '${StackNamePrefix}-dbsubnets'
 
-  ###################
-  # RDS DB Instance #
-  ###################
+  ##############################
+  # DB Parameters and Instance #
+  ##############################
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: "Force SSL for RDS connections"
+      Family: !Sub "${Engine}${EngineVersion}"  # mysql8.0
+      Parameters:
+        require_secure_transport: "ON"
 
   DBInstance:
     Type: AWS::RDS::DBInstance
     Properties:
       DBName: !Ref DBName
-      Engine: mysql
+      Engine: !Ref Engine
       EngineVersion: !Ref EngineVersion
+      DBParameterGroupName: !Ref DBParameterGroup
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: !Ref AllocatedStorage
       MasterUsername: !Ref DBUsername
