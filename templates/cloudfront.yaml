@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: S3 Bucket for Static Assets + CloudFront Distribution with OAC
+Description: CloudFront Distribution
 
 Parameters:
   StackNamePrefix:
@@ -7,27 +7,10 @@ Parameters:
     Default: enpm818n
 
 Resources:
-  #############
-  # S3 Bucket #
-  #############
-  StaticAssetsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${StackNamePrefix}-static-assets-${AWS::AccountId}'
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-
-  ####################################
-  # Origin Access Control (CF -> S3) #
-  ####################################
-  CloudFrontOAC:
+  ##########################
+  # Origin Access Controls #
+  ##########################
+  OriginAccessControlS3:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
@@ -39,7 +22,7 @@ Resources:
   ###########################
   # CloudFront Distribution #
   ###########################
-  MyDistribution:
+  Distribution:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
@@ -49,8 +32,9 @@ Resources:
         HttpVersion: http2
         Origins:
           - Id: S3Origin
-            DomainName: !GetAtt StaticAssetsBucket.DomainName
-            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+            DomainName: 
+              Fn::ImportValue: !Sub '${StackNamePrefix}-S3BucketDomainName'
+            OriginAccessControlId: !GetAtt OriginAccessControlS3.Id
             S3OriginConfig: {}
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
@@ -66,7 +50,8 @@ Resources:
   BucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref StaticAssetsBucket
+      Bucket: 
+        Fn::ImportValue: !Sub '${StackNamePrefix}-S3BucketName'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -75,17 +60,18 @@ Resources:
             Principal:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
-            Resource: !Sub '${StaticAssetsBucket.Arn}/*'
+            Resource: 
+              - !Sub 
+                  - '${BucketArn}/*'
+                  - BucketArn: 
+                      Fn::ImportValue: !Sub '${StackNamePrefix}-S3BucketArn'
             Condition:
               StringEquals:
-                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${MyDistribution.Id}'
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution.Id}'
 
 Outputs:
   DistributionDomainName:
     Description: CloudFront URL
-    Value: !GetAtt MyDistribution.DomainName
+    Value: !GetAtt Distribution.DomainName
     Export:
       Name: !Sub '${StackNamePrefix}-DistributionDomainName'
-  S3BucketName:
-    Description: S3 bucket name
-    Value: !Ref StaticAssetsBucket

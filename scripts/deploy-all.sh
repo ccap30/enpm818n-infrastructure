@@ -146,20 +146,15 @@ deploy_stack "enpm818n-database" "database.yaml"
 
 
 
-########################################
-# Sync S3 Bucket and Deploy CloudFront #
-########################################
-CLOUD_FRONT_STACK_NAME="enpm818n-cloudfront"
-# deploy_stack "$CLOUD_FRONT_STACK_NAME" "cloudfront.yaml"
+######################################
+# Deploy S3 Bucket and Static Assets #
+######################################
+S3_BUCKET_STACK_NAME="enpm818n-s3-bucket"
+deploy_stack "$S3_BUCKET_STACK_NAME" "s3.yaml"
 
 S3_BUCKET=$(aws cloudformation describe-stacks \
-    --stack-name $CLOUD_FRONT_STACK_NAME \
+    --stack-name $S3_BUCKET_STACK_NAME \
     --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" \
-    --output text)
-
-CF_URL=$(aws cloudformation describe-stacks \
-    --stack-name $CLOUD_FRONT_STACK_NAME \
-    --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" \
     --output text)
 
 echo "Syncing files (.png, .jpg, .js, .css) with the S3 bucket..."
@@ -169,8 +164,22 @@ aws s3 sync "$WEB_APP_REPO" "s3://$S3_BUCKET" \
     --include "*.jpg" \
     --include "*.js" \
     --include "*.css" \
-    --exact-timestamps \
     --only-show-errors
+
+
+
+#####################
+# Deploy CloudFront #
+#####################
+CLOUD_FRONT_STACK_NAME="enpm818n-cloudfront"
+deploy_stack "$CLOUD_FRONT_STACK_NAME" "cloudfront.yaml"
+
+CF_URL=$(aws cloudformation describe-stacks \
+    --stack-name $CLOUD_FRONT_STACK_NAME \
+    --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" \
+    --output text)
+
+
 
 ##########################
 # E-commerce Application #

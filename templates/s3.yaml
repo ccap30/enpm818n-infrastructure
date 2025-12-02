@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3 bucket for static assets
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+
+Resources:
+  #############
+  # S3 Bucket #
+  #############
+  StaticAssetsS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${StackNamePrefix}-static-assets-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+Outputs:
+  S3BucketName:
+    Value: !Ref StaticAssetsS3Bucket
+    Export:
+      Name: !Sub '${StackNamePrefix}-S3BucketName'
+  S3BucketArn:
+    Value: !GetAtt StaticAssetsS3Bucket.Arn
+    Export:
+      Name: !Sub '${StackNamePrefix}-S3BucketArn'
+  S3BucketDomainName:
+    Value: !GetAtt StaticAssetsS3Bucket.DomainName
+    Export:
+      Name: !Sub '${StackNamePrefix}-S3BucketDomainName'

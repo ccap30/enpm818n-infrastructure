@@ -244,7 +244,7 @@ Resources:
             # TODO: Put this on multiple lines
             export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
 
-            wget -P /var/www/html/includes https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+            wget -P /etc/ssl/certs https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
             
             # Set up connect.php
             cat <<EOF > /var/www/html/includes/connect.php
@@ -252,8 +252,8 @@ Resources:
             \$db_host = "$DB_ENDPOINT";
             \$db_user = "$DB_USER";
             \$db_name = "$DB_NAME";
-            \$db_pass = "$DB_PASS";
-            \$ssl_ca_path = '/var/www/html/includes/global-bundle.pem';
+            \$db_pass = '$DB_PASS';
+            \$ssl_ca_path = "/etc/ssl/certs/global-bundle.pem";
             \$con = mysqli_init();
             if (!\$con) {
                 die(mysqli_error(\$con));
@@ -269,10 +269,10 @@ Resources:
             # Initialize DB if empty
             # TODO: Put these two commands on multiple lines
             # TODO: Move to AWS Lambda
-            TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=global-bundle.pem --ssl-verify-server-cert -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
+            TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
             if [ "$TABLE_EXISTS" -eq 0 ]; then
               echo "Initializing database."
-              mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=global-bundle.pem --ssl-verify-server-cert ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
+              mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
             else
               echo "Table already exists, skipping initialization."
             fi
