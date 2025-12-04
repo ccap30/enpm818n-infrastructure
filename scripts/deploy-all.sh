@@ -8,9 +8,6 @@ REGION="us-east-1"
 CAPABILITIES="CAPABILITY_NAMED_IAM"
 SCRIPTS_DIR="$REPO_ROOT/scripts"
 
-# SQL_KEY="ecommerce_1.sql"
-# SQL_S3_PATH="s3://${S3_BUCKET}/${SQL_KEY}"
-# REPO_URL="https://github.com/edaviage/818N-E_Commerce_Application"
 WEB_APP_REPO="$REPO_ROOT/../818N-E_Commerce_Application"
 
 # Parameters:
@@ -22,14 +19,6 @@ function validate_stack {
 
     # Alternatively, you can use the following, but it prints the formatted template
     # aws cloudformation validate-template --template-body file://$TEMPLATE_FILE
-}
-
-# Parameters:
-#   1. Stack name
-function print_outputs {
-    STACK_NAME=$1
-    echo "Stack outputs for $STACK_NAME"
-    aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION --query "Stacks[0].Outputs"
 }
 
 # Parameters:
@@ -67,11 +56,9 @@ function deploy_stack {
             --capabilities $CAPABILITIES \
             --region $REGION
     fi
-    echo "Successfully deployed $STACK_NAME"
-
-    # Useful for debugging
-    # print_outputs $STACK_NAME $REGION
 }
+
+
 
 
 echo "There are prerequiste steps required before deploying the stacks."
@@ -168,19 +155,6 @@ aws s3 sync "$WEB_APP_REPO" "s3://$S3_BUCKET" \
 
 
 
-#####################
-# Deploy CloudFront #
-#####################
-CLOUD_FRONT_STACK_NAME="enpm818n-cloudfront"
-deploy_stack "$CLOUD_FRONT_STACK_NAME" "cloudfront.yaml"
-
-CF_URL=$(aws cloudformation describe-stacks \
-    --stack-name $CLOUD_FRONT_STACK_NAME \
-    --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue" \
-    --output text)
-
-
-
 ##########################
 # E-commerce Application #
 ##########################
@@ -210,8 +184,15 @@ ACM_CERT=$(aws acm list-certificates \
 
 deploy_stack "enpm818n-application" \
     "application.yaml" \
-    "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT CFEndpoint=$CF_URL AcmCertificateArn=$ACM_CERT"
+    "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT AcmCertificateArn=$ACM_CERT"
 
+
+
+#####################
+# Deploy CloudFront #
+#####################
+CLOUD_FRONT_STACK_NAME="enpm818n-cloudfront"
+deploy_stack "$CLOUD_FRONT_STACK_NAME" "cloudfront.yaml" "AcmCertificateArn=$ACM_CERT"
 
 
 echo ""

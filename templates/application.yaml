@@ -27,23 +27,12 @@ Parameters:
   DBUsername:
     Type: String
     Default: appuser
-  # TODO: Make these configurable in deploy-all.sh
-  DomainName:
-    Type: String
-    Description: Domain Name from Route 53
-    Default: "carl-aws.com"
-  HostedZoneId:
-    Type: String
-    Description: Hosted Zone ID from Route 53
-    Default: "Z07334946X0IAB2Z3DDY"
   NotificationEmail:
     Type: String
     Description: Email address to receive Alarm notifications
     Default: "ccappell@umd.edu"
   # Required at runtime
   DBEndpoint:
-    Type: String
-  CFEndpoint:
     Type: String
   AcmCertificateArn:
     Type: String
@@ -129,18 +118,6 @@ Resources:
           - ','
           - Fn::ImportValue: !Sub '${StackNamePrefix}-PublicSubnetIds'
       SecurityGroups: [!Ref AlbSecurityGroup]
-
-  AlbRecordSet:
-    Type: AWS::Route53::RecordSet
-    Properties:
-      # Must end with a dot
-      Name: !Sub '${DomainName}.'
-      HostedZoneId: !Sub '${HostedZoneId}' 
-      Type: A  # IPv4 record
-      AliasTarget:
-        DNSName: !GetAtt Alb.DNSName
-        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
-        EvaluateTargetHealth: false
 
   # Target Group - Uses Port 80, securely behind a private subnet
   FrontendTargetGroup:
@@ -230,64 +207,30 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash
             set -euo pipefail
-            # TODO: Move this to the image builder
-            sudo apt update -y
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
-            sudo apt install unzip
-            unzip /tmp/awscliv2.zip -d /tmp
-            sudo /tmp/aws/install
-
-            export CF_URL='${CFEndpoint}'
             export DB_ENDPOINT='${DBEndpoint}'
             export DB_USER='${DBUsername}'
             export DB_NAME='${DBName}'
             # TODO: Put this on multiple lines
             export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
 
-            wget -P /etc/ssl/certs https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
-            
-            # Set up connect.php
-            cat <<EOF > /var/www/html/includes/connect.php
-            <?php
-            \$db_host = "$DB_ENDPOINT";
-            \$db_user = "$DB_USER";
-            \$db_name = "$DB_NAME";
-            \$db_pass = '$DB_PASS';
-            \$ssl_ca_path = "/etc/ssl/certs/global-bundle.pem";
-            \$con = mysqli_init();
-            if (!\$con) {
-                die(mysqli_error(\$con));
-            }
-            \$con->ssl_set(NULL, NULL, \$ssl_ca_path, NULL, NULL);
-            \$con->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, true);
-            if (!\$con->real_connect(\$db_host, \$db_user, \$db_pass, \$db_name)) {
-              die(mysqli_error(\$con));
-            }
-            ?>
-            EOF
+            sudo su -c "cat <<EOF > /etc/apache2/conf-enabled/app_env_vars.conf
+            SetEnv DB_ENDPOINT $DB_ENDPOINT
+            SetEnv DB_NAME $DB_NAME
+            SetEnv DB_USER $DB_USER
+            SetEnv DB_PASS $DB_PASS
+            EOF"
 
             # Initialize DB if empty
             # TODO: Put these two commands on multiple lines
             # TODO: Move to AWS Lambda
+            echo "Checking table"
             TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
             if [ "$TABLE_EXISTS" -eq 0 ]; then
-              echo "Initializing database."
+              echo "Creating table..."
               mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
             else
-              echo "Table already exists, skipping initialization."
+              echo "Table exists!"
             fi
-
-            # Tell Apache to redirect static files to CloudFront
-            sudo a2enmod rewrite
-            APACHE_CONF="/etc/apache2/sites-available/000-default.conf"
-            LAST_LINE=$(wc -l < "$APACHE_CONF")
-            INSERT_LINE=$((LAST_LINE))
-            sudo sed -i "$INSERT_LINE i \\
-                    RewriteRule ^/(.*)$ https://$CF_URL/\\\$1 [R=302,L]" "$APACHE_CONF"
-            sudo sed -i "$INSERT_LINE i \\
-                    RewriteCond %{REQUEST_URI} \\\.(png|jpg|jpeg|js|css)$ [NC]" "$APACHE_CONF"
-            sudo sed -i "$INSERT_LINE i \\
-                    RewriteEngine On" "$APACHE_CONF"
 
             sudo systemctl restart apache2
 
@@ -515,5 +458,7 @@ Outputs:
   ALBDNSName:
     Description: Public URL for the app
     Value: !GetAtt Alb.DNSName
+    Export:
+      Name: !Sub '${StackNamePrefix}-ALBDNSName'
   LogGroupArn:
     Value: !GetAtt WafLogGroup.Arn
