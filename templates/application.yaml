@@ -75,6 +75,15 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags: [{ Key: Name, Value: !Sub '${StackNamePrefix}-App-SG' }]
 
+  AppSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      DestinationSecurityGroupId: !Ref RedisSecurityGroup
+
   # Load Balancer
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -145,7 +154,6 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref FrontendTargetGroup
 
-  # Why still listen on 80? Good security practice to catch and force HTTPS
   HTTPRedirectListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -153,11 +161,8 @@ Resources:
       Port: 80
       Protocol: HTTP
       DefaultActions:
-        - Type: redirect
-          RedirectConfig:
-            Protocol: HTTPS
-            Port: "443"
-            StatusCode: "HTTP_301"
+        - Type: forward
+          TargetGroupArn: !Ref FrontendTargetGroup
 
   ######################################
   # IAM Role (SSM and Secrets Manager) #
@@ -204,35 +209,61 @@ Resources:
         InstanceType: !Ref InstanceType
         SecurityGroupIds: [!Ref AppSecurityGroup]
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -euo pipefail
-            export DB_ENDPOINT='${DBEndpoint}'
-            export DB_USER='${DBUsername}'
-            export DB_NAME='${DBName}'
-            # TODO: Put this on multiple lines
-            export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              set -euo pipefail
+              git clone https://github.com/ccap30/818N-E_Commerce_Application
+              sudo mv 818N-E_Commerce_Application/* /var/www/html
 
-            sudo su -c "cat <<EOF > /etc/apache2/conf-enabled/app_env_vars.conf
-            SetEnv DB_ENDPOINT $DB_ENDPOINT
-            SetEnv DB_NAME $DB_NAME
-            SetEnv DB_USER $DB_USER
-            SetEnv DB_PASS $DB_PASS
-            EOF"
+              # TODO: Put in image builder
+              sudo apt install -y php-redis
+              sudo chown -R www-data:www-data /var/www/html
+              sudo chmod -R 755 /var/www/html
 
-            # Initialize DB if empty
-            # TODO: Put these two commands on multiple lines
-            # TODO: Move to AWS Lambda
-            echo "Checking table"
-            TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
-            if [ "$TABLE_EXISTS" -eq 0 ]; then
-              echo "Creating table..."
-              mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
-            else
-              echo "Table exists!"
-            fi
+              sudo a2enmod headers
+              sudo a2enmod remoteip
 
-            sudo systemctl restart apache2
+              cat << 'EOF' | sudo tee /etc/apache2/conf-enabled/fix_ip_issues.conf
+              RemoteIPHeader X-Forwarded-For
+              RemoteIPInternalProxy 10.0.0.0/16
+
+              SetEnvIf CloudFront-Viewer-Address "^([^:]+)" CLEAN_IP=$1
+              RequestHeader set X-Forwarded-For %{CLEAN_IP}e env=CLEAN_IP
+              EOF
+              # END TODO
+
+              # Redis database for user session management
+              sudo su -c "echo session.save_handler = redis >> /etc/php/8.3/apache2/php.ini"
+              sudo su -c "echo session.save_path = 'tcp://${RedisCacheCluster.RedisEndpoint.Address}:${RedisCacheCluster.RedisEndpoint.Port}' >> /etc/php/8.3/apache2/php.ini"
+
+              export DB_ENDPOINT='${DBEndpoint}'
+              export DB_USER='${DBUsername}'
+              export DB_NAME='${DBName}'
+              # TODO: Put this on multiple lines
+              export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
+
+              sudo su -c "cat <<EOF > /etc/apache2/conf-enabled/app_env_vars.conf
+              SetEnv DB_ENDPOINT $DB_ENDPOINT
+              SetEnv DB_NAME $DB_NAME
+              SetEnv DB_USER $DB_USER
+              SetEnv DB_PASS $DB_PASS
+              EOF"
+
+              # Initialize DB if empty
+              # TODO: Put these two commands on multiple lines
+              # TODO: Move to AWS Lambda
+              echo "Checking table"
+              TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
+              if [ "$TABLE_EXISTS" -eq 0 ]; then
+                echo "Creating table..."
+                mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert ecommerce_1 < /var/www/html/Database/ecommerce_1.sql
+              else
+                echo "Table exists!"
+              fi
+
+              sudo systemctl restart apache2
+            - RedisCache: !Ref RedisCacheCluster
 
   ############################
   # Autoscaling and Policies #
@@ -317,35 +348,25 @@ Resources:
         MetricName: !Sub '${StackNamePrefix}-WebACL'
         SampledRequestsEnabled: true
       Rules:
-        # SQL Injection Protection
-        - Name: AWSManagedRulesSQLiRuleSet
-          Priority: 1
-          OverrideAction: { None: {} }
+        # Only US (wouldn't do this for real, only because it's an assignment)
+        - Name: Deny-International
+          Priority: 0
+          Action:
+            Block: {}
           Statement:
-            ManagedRuleGroupStatement:
-              VendorName: AWS
-              Name: AWSManagedRulesSQLiRuleSet
+            NotStatement:
+              Statement:
+                GeoMatchStatement:
+                  CountryCodes:
+                    - US
           VisibilityConfig:
-            CloudWatchMetricsEnabled: true
-            MetricName: SQLiRules
             SampledRequestsEnabled: true
-
-        # Cross-Site Scripting Protection
-        - Name: AWSManagedRulesCommonRuleSet
-          Priority: 2
-          OverrideAction: { None: {} }
-          Statement:
-            ManagedRuleGroupStatement:
-              VendorName: AWS
-              Name: AWSManagedRulesCommonRuleSet
-          VisibilityConfig:
             CloudWatchMetricsEnabled: true
-            MetricName: CommonRules
-            SampledRequestsEnabled: true
+            MetricName: Deny-International
 
         # Rate Limit (Anti-DDoS)
         - Name: RateLimit
-          Priority: 3
+          Priority: 1
           Action:
             Block: {}
           Statement:
@@ -355,6 +376,40 @@ Resources:
           VisibilityConfig:
             CloudWatchMetricsEnabled: true
             MetricName: RateLimitRule
+            SampledRequestsEnabled: true
+
+        # SQL Injection Protection
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 2
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+              RuleActionOverrides:
+                - Name: SQLi_BODY  # TODO: Ignore on registration forms only?
+                  ActionToUse:
+                    Count: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: SQLiRules
+            SampledRequestsEnabled: true
+
+        # Cross-Site Scripting Protection
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 3
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              RuleActionOverrides:
+                - Name: SizeRestrictions_BODY  # Blocks requests over 8 KB, 403 Forbidden occurs with most profile pictures
+                  ActionToUse:
+                    Count: {}
+          VisibilityConfig:
+            MetricName: CommonRules
+            CloudWatchMetricsEnabled: true
             SampledRequestsEnabled: true
 
   # WAF Logging Configuration
@@ -454,11 +509,49 @@ Resources:
             Stat: Sum
           ReturnData: false
 
+  ######################################
+  # ElastiCache Redis for user sessions #
+  #######################################
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access Redis from App
+      VpcId:
+        Fn::ImportValue: !Sub '${StackNamePrefix}-VpcId'
+
+  RedisSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RedisSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: 'Redis SubnetGroup'
+      SubnetIds:
+        Fn::Split:
+          - ','
+          - Fn::ImportValue: !Sub '${StackNamePrefix}-AppSubnetIds'
+
+  RedisCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      ClusterName: session-cache
+      Engine: redis
+      CacheNodeType: cache.t2.micro
+      NumCacheNodes: 1
+      VpcSecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      Port: 6379
+
 Outputs:
   ALBDNSName:
     Description: Public URL for the app
     Value: !GetAtt Alb.DNSName
     Export:
       Name: !Sub '${StackNamePrefix}-ALBDNSName'
-  LogGroupArn:
-    Value: !GetAtt WafLogGroup.Arn

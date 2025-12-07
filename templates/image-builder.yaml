@@ -68,8 +68,6 @@ Resources:
                     - sudo /tmp/aws/install
                     - echo 'DirectoryIndex index.php index.html index.cgi index.pl index.xhtml index.htm' | sudo tee /etc/apache2/mods-enabled/dir.conf
                     - sudo rm -f /var/www/html/index.html
-                    - git clone https://github.com/ccap30/818N-E_Commerce_Application
-                    - sudo mv 818N-E_Commerce_Application/* /var/www/html
 
   ####################################
   # Image Recipe using latest Ubuntu #

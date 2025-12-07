@@ -6,12 +6,8 @@ set -e
 REPO_ROOT=$(git rev-parse --show-toplevel)
 REGION="us-east-1"
 CAPABILITIES="CAPABILITY_NAMED_IAM"
-SCRIPTS_DIR="$REPO_ROOT/scripts"
-
 WEB_APP_REPO="$REPO_ROOT/../818N-E_Commerce_Application"
 
-# Parameters:
-#   $1. Path to template file
 function validate_stack {
     TEMPLATE_FILE=$1
     echo "Validating CloudFormation template: $TEMPLATE_FILE"
@@ -21,14 +17,10 @@ function validate_stack {
     # aws cloudformation validate-template --template-body file://$TEMPLATE_FILE
 }
 
-# Parameters:
-#   1. Stack name
-#   2. CloudFormation yaml file name
-#   3. Any parameter overrides key,value pairs
 function deploy_stack {
     STACK_NAME=$1
-    TEMPLATE_FILE="$REPO_ROOT/templates/$2"
-    PARAMETER_OVERRIDES="$3"
+    TEMPLATE_FILE="$REPO_ROOT/templates/$2"  # CloudFormation yaml file name
+    PARAMETER_OVERRIDES="$3"  # Any parameter overrides key,value pairs
 
     echo ""
     echo "----------------------------------"
@@ -144,20 +136,29 @@ S3_BUCKET=$(aws cloudformation describe-stacks \
     --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" \
     --output text)
 
-echo "Syncing files (.png, .jpg, .js, .css) with the S3 bucket..."
-aws s3 sync "$WEB_APP_REPO" "s3://$S3_BUCKET" \
-    --exclude "*" \
-    --include "*.png" \
-    --include "*.jpg" \
-    --include "*.js" \
-    --include "*.css" \
-    --only-show-errors
+echo "Syncing asset files (.png, .jpg, .js, .css) with the S3 bucket..."
+aws s3 sync "$WEB_APP_REPO/assets" "s3://$S3_BUCKET/assets" \
+--exclude "*" \
+--include "*.png" \
+--include "*.jpg" \
+--include "*.js" \
+--include "*.css" \
+--only-show-errors
 
 
 
-##########################
-# E-commerce Application #
-##########################
+############
+# ACM_CERT #
+############
+ACM_CERT=$(aws acm list-certificates \
+    --query "CertificateSummaryList[?DomainName=='carl-aws.com'].CertificateArn" \
+    --output text)
+
+
+
+##################
+# Deploy Web App #
+##################
 KEY_NAME="enpm818n-key-pair"
 KEY_FILE="$KEY_NAME.pem"
 if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" >/dev/null 2>&1; then
@@ -178,10 +179,6 @@ DB_ENDPOINT=$(aws cloudformation describe-stacks \
     --query "Stacks[0].Outputs[?OutputKey=='DBEndpoint'].OutputValue" \
     --output text)
 
-ACM_CERT=$(aws acm list-certificates \
-    --query "CertificateSummaryList[?DomainName=='carl-aws.com'].CertificateArn" \
-    --output text)
-
 deploy_stack "enpm818n-application" \
     "application.yaml" \
     "CustomAmiId=$CUSTOM_UBUNTU_AMI_ID DBEndpoint=$DB_ENDPOINT AcmCertificateArn=$ACM_CERT"
@@ -191,8 +188,7 @@ deploy_stack "enpm818n-application" \
 #####################
 # Deploy CloudFront #
 #####################
-CLOUD_FRONT_STACK_NAME="enpm818n-cloudfront"
-deploy_stack "$CLOUD_FRONT_STACK_NAME" "cloudfront.yaml" "AcmCertificateArn=$ACM_CERT"
+deploy_stack "enpm818n-cloudfront" "cloudfront.yaml" "AcmCertificateArn=$ACM_CERT"
 
 
 echo ""

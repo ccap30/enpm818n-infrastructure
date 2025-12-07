@@ -50,7 +50,7 @@ Resources:
           }
         GenerateStringKey: "password"
         PasswordLength: 32
-        ExcludeCharacters: '"@/\'
+        ExcludeCharacters: '"''`@/\$;&|<>()[]{}'
 
   ################################
   # DB Security Group and Subnet #

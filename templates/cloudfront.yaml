@@ -13,9 +13,9 @@ Parameters:
     Type: String
 
 Resources:
-  ##########################
-  # Origin Access Controls #
-  ##########################
+  ############################
+  # S3 Bucket OAC and Policy #
+  ############################
   OriginAccessControlS3:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
@@ -24,6 +24,68 @@ Resources:
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: 
+        Fn::ImportValue: !Sub '${StackNamePrefix}-S3BucketName'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: 
+              - !Sub 
+                  - '${BucketArn}/*'
+                  - BucketArn: 
+                      Fn::ImportValue: !Sub '${StackNamePrefix}-S3BucketArn'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution.Id}'
+
+  # CloudFront fowards an IP chain to the app, need to isolate only the user's address
+  OriginRequestPolicyWithIP:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub '${StackNamePrefix}-ip-and-all'
+        CookiesConfig:
+          CookieBehavior: "all"
+        QueryStringsConfig:
+          QueryStringBehavior: "all"
+        HeadersConfig:
+          HeaderBehavior: "whitelist"
+          Headers:
+            - "CloudFront-Viewer-Address"  # User's IP connected to CloudFront
+            - "Host"  # Everything below is standard
+            - "User-Agent"
+            - "Referer"
+            - "Accept"
+            - "Accept-Language"
+
+  ProductDetailsCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: 'Dynamic-Product-Details-Policy'
+        DefaultTTL: 300  # seconds
+        MaxTTL: 3600
+        MinTTL: 0  
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: whitelist
+            QueryStrings:
+              - 'product_id' # Cache based on product_id because add_to_cart is a GET request
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
 
   ###########################
   # CloudFront Distribution #
@@ -51,7 +113,7 @@ Resources:
             CustomOriginConfig:
               HTTPPort: 80
               HTTPSPort: 443
-              OriginProtocolPolicy: https-only 
+              OriginProtocolPolicy: http-only
               OriginSSLProtocols: [TLSv1.2]
 
           - Id: S3Origin
@@ -60,74 +122,61 @@ Resources:
             S3OriginConfig: {}
             OriginAccessControlId: !GetAtt OriginAccessControlS3.Id
 
+        OriginGroups:
+          Quantity: 1
+          Items:
+            - Id: S3-Fail-Use-ALB-Group
+              FailoverCriteria:
+                StatusCodes:
+                  Quantity: 2
+                  Items: [403, 404]
+              Members:
+                Quantity: 2
+                Items:
+                  - OriginId: S3Origin
+                  - OriginId: ALBOrigin
+
         # Default Behavior
         DefaultCacheBehavior:
           TargetOriginId: ALBOrigin
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [HEAD, DELETE, POST, GET, OPTIONS, PUT, PATCH]
           CachedMethods: [HEAD, GET]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+          OriginRequestPolicyId: !Ref OriginRequestPolicyWithIP
           Compress: true
-          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
 
-        # Cache static assets in S3 bucket
         CacheBehaviors:
-          - PathPattern: '*.jpg'
-            TargetOriginId: S3Origin
+            ############################################
+            # Important Note about products.php #
+            ############################################
+            # We CANNOT cache products because it makes a GET request for 'add_to_cart'
+
+            # Static: Assets
+          - PathPattern: 'assets/*'
+            TargetOriginId: S3-Fail-Use-ALB-Group  # For good measure
             ViewerProtocolPolicy: redirect-to-https
             AllowedMethods: [HEAD, GET, OPTIONS]
             CachedMethods: [HEAD, GET]
+            CachePolicyId: '658327ea-f89d-4fab-a63d-7e88639e58f6'  # CachingOptimized
             Compress: true
-            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-
-          - PathPattern: '*.png'
-            TargetOriginId: S3Origin
+          
+          # Static: Product images
+          - PathPattern: 'admin/product_images/*'
+            TargetOriginId: S3-Fail-Use-ALB-Group  # If a new product image is uploaded, it won't be in the S3 bucket
             ViewerProtocolPolicy: redirect-to-https
             AllowedMethods: [HEAD, GET, OPTIONS]
             CachedMethods: [HEAD, GET]
+            CachePolicyId: '658327ea-f89d-4fab-a63d-7e88639e58f6'  # CachingOptimized
             Compress: true
-            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
 
-          - PathPattern: '*.css'
-            TargetOriginId: S3Origin
+          # Dynamic: Limited scope on caching product_details, using ProductDetailsCachePolicy
+          - PathPattern: 'product_details.php'
+            TargetOriginId: ALBOrigin
             ViewerProtocolPolicy: redirect-to-https
-            AllowedMethods: [HEAD, GET, OPTIONS]
-            CachedMethods: [HEAD, GET]
+            CachePolicyId: !Ref ProductDetailsCachePolicy
+            OriginRequestPolicyId: !Ref OriginRequestPolicyWithIP
             Compress: true
-            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-
-          - PathPattern: '*.js'
-            TargetOriginId: S3Origin
-            ViewerProtocolPolicy: redirect-to-https
-            AllowedMethods: [HEAD, GET, OPTIONS]
-            CachedMethods: [HEAD, GET]
-            Compress: true
-            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-
-  #############################################
-  # S3 Bucket Policy allowing CF Distribution #
-  #############################################
-  BucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: 
-        Fn::ImportValue: !Sub '${StackNamePrefix}-S3BucketName'
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AllowCloudFrontServicePrincipal
-            Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: 
-              - !Sub 
-                  - '${BucketArn}/*'
-                  - BucketArn: 
-                      Fn::ImportValue: !Sub '${StackNamePrefix}-S3BucketArn'
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution.Id}'
 
   RecordSet:
     Type: AWS::Route53::RecordSet
