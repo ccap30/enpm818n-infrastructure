@@ -2,12 +2,11 @@
 
 set -e
 
-# TODO:
-# ./delete-all.sh           : Delete app, database, network
+# ./delete-all.sh           : Delete app, cdn, database, network, cloudwatch dashboard, and cloudtrail
 # ./delete-all.sh builder   : Delete the image builder
-# ./delete-all.sh s3        : Delete the S3 bucket
-# ./delete-all.sh all       : Delete everything
-ALL_FLAG="$1"
+# ./delete-all.sh s3        : Delete the s3 bucket
+# ./delete-all.sh all       : Delete everything (image builder, s3 bucket, and everything else)
+OPTIONAL_FLAG="$1"
 
 # Variables
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -36,22 +35,65 @@ function delete_stack {
     echo "Stack $STACK_NAME has been successfully deleted."
 }
 
+echo "============================="
+echo "  Deleting requested stacks  "
+echo "============================="
 
-echo "======================="
-echo "  Deleting all stacks  "
-echo "======================="
+if [[ "$OPTIONAL_FLAG" == "builder" ]]; then
+    delete_stack "enpm818n-image-builder"
+    echo ""
+    echo "=========================================="
+    echo "    Successfully deleted image builder    "
+    echo "  Recommend double checking just in case! "
+    echo "=========================================="
+    echo ""
+    exit 0
+fi
 
-# This list should be in downward dependency order (app, then db, then network)
+if [[ "$OPTIONAL_FLAG" == "s3" ]]; then
+    delete_stack "enpm818n-s3"
+    echo ""
+    echo "=========================================="
+    echo "      Successfully deleted S3 bucket      "
+    echo "  Recommend double checking just in case! "
+    echo "=========================================="
+    echo ""
+    exit 0
+fi
+
+if [[ "$OPTIONAL_FLAG" == "all" ]]; then
+    delete_stack "enpm818n-cloudtrail" &
+    delete_stack "enpm818n-cloudwatch" &
+    delete_stack "enpm818n-image-builder" &
+    deploy_stack "enpm818n-cloudfront" &
+    wait
+    delete_stack "enpm818n-application"
+    delete_stack "enpm818n-database"
+
+    # TODO: Empty the bucket first
+    delete_stack "enpm818n-s3-bucket" &
+    delete_stack "enpm818n-network" &
+    wait
+    echo ""
+    echo "=========================================="
+    echo "     Successfully deleted all stacks      "
+    echo "  Recommend double checking just in case! "
+    echo "=========================================="
+    echo ""
+    exit 0
+fi
+
+delete_stack "enpm818n-cloudtrail" &
+delete_stack "enpm818n-cloudwatch" &
+delete_stack "enpm818n-cloudfront" &
+wait
 delete_stack "enpm818n-application"
-deploy_stack "enpm818n-cloudfront"
 delete_stack "enpm818n-database"
 delete_stack "enpm818n-network"
 
-delete_stack "enpm818n-image-builder"
-
 echo ""
 echo "=========================================="
-echo "     Successfully deleted all stacks      "
+echo "       Successfully deleted stacks        "
 echo "  Recommend double checking just in case! "
 echo "=========================================="
 echo ""

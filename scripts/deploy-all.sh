@@ -76,14 +76,13 @@ echo "========================"
 # If it doesn't, we need to deploy the image builder and generate that image.
 # TODO: "enpm818n-custom-ubuntu-ami" is the "${PREFIX}-${IMAGE_NAME}" that's used in the image builder template.
 #        We should create a local variable in this script and pass it as a parameter to the template.
+
 CUSTOM_UBUNTU_AMI_ID=$(aws ec2 describe-images \
                         --owners self \
                         --filters "Name=name,Values=enpm818n-custom-ubuntu-ami-*" \
                         --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
                         --output text)
 
-# This could probably be replaced with an AWS lambda function, but since this 
-# image is supposed to be static, let's just grab what should be the only image ID.
 if [[ "$CUSTOM_UBUNTU_AMI_ID" == "None" ]]; then
     # Deploy the image builder
     IMAGE_BUILDER_STACK="enpm818n-image-builder"
@@ -189,6 +188,18 @@ deploy_stack "enpm818n-application" \
 # Deploy CloudFront #
 #####################
 deploy_stack "enpm818n-cloudfront" "cloudfront.yaml" "AcmCertificateArn=$ACM_CERT"
+
+
+###############################
+# Deploy CloudWatch Dashboard #
+###############################
+deploy_stack "enpm818n-cloudwatch" "cw-dashboard.yaml"
+
+
+#####################
+# Deploy CloudTrail #
+#####################
+deploy_stack "enpm818n-cloudtrail" "cloudtrail.yaml"
 
 
 echo ""

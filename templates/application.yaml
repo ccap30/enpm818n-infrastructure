@@ -132,6 +132,7 @@ Resources:
   FrontendTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
+      Name: !Sub '${StackNamePrefix}-frontend-tg'
       VpcId:
         Fn::ImportValue: !Sub '${StackNamePrefix}-VpcId'
       Port: 80
@@ -271,6 +272,7 @@ Resources:
   FrontendAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      AutoScalingGroupName: !Sub '${StackNamePrefix}-frontend-asg'
       VPCZoneIdentifier:
         Fn::Split:
           - ','
@@ -468,6 +470,8 @@ Resources:
       Threshold: 0.5  # seconds
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
 
   ErrorRateAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -555,3 +559,11 @@ Outputs:
     Value: !GetAtt Alb.DNSName
     Export:
       Name: !Sub '${StackNamePrefix}-ALBDNSName'
+  FrontendTargetGroupFullName:
+    Value: !GetAtt FrontendTargetGroup.TargetGroupFullName
+    Export:
+      Name: !Sub '${StackNamePrefix}-FrontendTargetGroupFullName'
+  ALBFullName:
+    Value: !GetAtt Alb.LoadBalancerFullName
+    Export:
+      Name: !Sub '${StackNamePrefix}-ALBFullName'

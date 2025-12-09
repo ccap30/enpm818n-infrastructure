@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudTrail Setup'
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+
+Resources:
+  #############
+  # S3 Bucket #
+  #############
+  CloudTrailS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${StackNamePrefix}-security-logs-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  CloudTrailS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailS3Bucket.Arn
+          - Sid: PutObject
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailS3Bucket.Arn}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  #########
+  # Trail #
+  #########
+  Trail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CloudTrailS3BucketPolicy
+    Properties:
+      TrailName: !Sub '${StackNamePrefix}-security-trail'
+      S3BucketName: !Ref CloudTrailS3Bucket
+      IsLogging: true
+      IsMultiRegionTrail: true
+      EnableLogFileValidation: true
+      IncludeGlobalServiceEvents: true
+      InsightSelectors:
+        - InsightType: ApiCallRateInsight
+        - InsightType: ApiErrorRateInsight
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+          DataResources: []

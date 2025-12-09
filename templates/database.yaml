@@ -52,6 +52,19 @@ Resources:
         PasswordLength: 32
         ExcludeCharacters: '"''`@/\$;&|<>()[]{}'
 
+  DatabaseKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
   ################################
   # DB Security Group and Subnet #
   ################################
@@ -108,6 +121,7 @@ Resources:
       MultiAZ: !Ref MultiAZ
       PubliclyAccessible: false
       StorageEncrypted: true
+      KmsKeyId: !Ref DatabaseKMSKey
       DeletionProtection: false
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Delete

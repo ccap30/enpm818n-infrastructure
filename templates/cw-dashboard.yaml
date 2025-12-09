@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudWatch Dashboard'
+
+Parameters:
+  StackNamePrefix:
+    Type: String
+    Default: enpm818n
+  AutoScalingGroupName:
+    Type: String
+    Default: 'enpm818n-frontend-asg'
+
+Resources:
+  CWDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${StackNamePrefix}-ecommerce-dashboard"
+      DashboardBody:
+        Fn::Sub:
+          - |
+            {
+              "widgets": [
+                { "type": "text", "x": 0, "y": 0, "width": 24, "height": 1,
+                  "properties": { "markdown": "## Alarm Status" }
+                },
+                {
+                  "type": "alarm", "x": 0, "y": 1, "width": 24, "height": 3,
+                  "properties": {
+                    "title": "System Health Check",
+                    "alarms": [
+                      "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:enpm818n-cpu",
+                      "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:enpm818n-custom",
+                      "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:enpm818n-latency",
+                      "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:enpm818n-errorrates"
+                    ]
+                  }
+                },
+                { "type": "text", "x": 0, "y": 4, "width": 24, "height": 1,
+                  "properties": { "markdown": "## Key Metrics" }
+                },
+                {
+                  "type": "metric", "x": 0, "y": 5, "width": 12, "height": 6,
+                  "properties": {
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "title": "ASG CPU Utilization",
+                    "metrics": [
+                      [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${AutoScalingGroupName}", { "period": 60, "id": "m1", "visible": false } ],
+                      [ { "expression": "m1 * 100", "label": "ASG CPU Utilization (%)", "id": "e1" } ]
+                    ],
+                    "yAxis": {
+                      "left": { "min": 0, "max": 100 }
+                    }
+                  }
+                },
+                {
+                  "type": "metric", "x": 12, "y": 5, "width": 12, "height": 6,
+                  "properties": {
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "title": "Target Response Time (Latency)",
+                    "metrics": [
+                      [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "${ALBFullName}", { "period": 60, "stat": "Average" } ],
+                      [ "...", { "stat": "p95", "label": "p95 Latency" } ]
+                    ]
+                  }
+                },
+                {
+                  "type": "metric", "x": 0, "y": 11, "width": 12, "height": 6,
+                  "properties": {
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "title": "Requests Per Target",
+                    "metrics": [
+                      [ "AWS/ApplicationELB", "RequestCountPerTarget", "TargetGroup", "${FrontendTargetGroupFullName}", { "period": 60 } ]
+                    ]
+                  }
+                },
+                {
+                  "type": "metric", "x": 12, "y": 11, "width": 12, "height": 6,
+                  "properties": {
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "title": "HTTP 5xx Errors",
+                    "metrics": [
+                      [ "AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "${ALBFullName}", { "period": 60, "color": "#d62728" } ]
+                    ]
+                  }
+                }
+              ]
+            }
+          - FrontendTargetGroupFullName:
+              Fn::ImportValue: !Sub "${StackNamePrefix}-FrontendTargetGroupFullName"
+            ALBFullName:
+              Fn::ImportValue: !Sub "${StackNamePrefix}-ALBFullName"
