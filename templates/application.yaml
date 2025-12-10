@@ -42,9 +42,6 @@ Resources:
   #################################################
   # Application and Load Balancer Security Groups #
   #################################################
-  # TODO: Refine this to ONLY what's necessary
-
-  # Application
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -60,10 +57,6 @@ Resources:
           FromPort: 443
           ToPort: 443
           SourceSecurityGroupId: !Ref AlbSecurityGroup
-        - IpProtocol: tcp  # TODO: Delete this
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
       SecurityGroupEgress:
         - IpProtocol: tcp
           FromPort: 80
@@ -84,7 +77,6 @@ Resources:
       ToPort: 6379
       DestinationSecurityGroupId: !Ref RedisSecurityGroup
 
-  # Load Balancer
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -214,16 +206,6 @@ Resources:
             - |
               #!/bin/bash
               set -euo pipefail
-              git clone https://github.com/ccap30/818N-E_Commerce_Application
-              sudo mv 818N-E_Commerce_Application/* /var/www/html
-
-              # TODO: Put in image builder
-              sudo apt install -y php-redis
-              sudo chown -R www-data:www-data /var/www/html
-              sudo chmod -R 755 /var/www/html
-
-              sudo a2enmod headers
-              sudo a2enmod remoteip
 
               cat << 'EOF' | sudo tee /etc/apache2/conf-enabled/fix_ip_issues.conf
               RemoteIPHeader X-Forwarded-For
@@ -232,7 +214,6 @@ Resources:
               SetEnvIf CloudFront-Viewer-Address "^([^:]+)" CLEAN_IP=$1
               RequestHeader set X-Forwarded-For %{CLEAN_IP}e env=CLEAN_IP
               EOF
-              # END TODO
 
               # Redis database for user session management
               sudo su -c "echo session.save_handler = redis >> /etc/php/8.3/apache2/php.ini"
@@ -241,7 +222,6 @@ Resources:
               export DB_ENDPOINT='${DBEndpoint}'
               export DB_USER='${DBUsername}'
               export DB_NAME='${DBName}'
-              # TODO: Put this on multiple lines
               export DB_PASS=$(aws secretsmanager get-secret-value --secret-id enpm818n-db-credentials --region us-east-1 --query SecretString --output text | jq -r '.password')
 
               sudo su -c "cat <<EOF > /etc/apache2/conf-enabled/app_env_vars.conf
@@ -252,8 +232,6 @@ Resources:
               EOF"
 
               # Initialize DB if empty
-              # TODO: Put these two commands on multiple lines
-              # TODO: Move to AWS Lambda
               echo "Checking table"
               TABLE_EXISTS=$(mysql -h $DB_ENDPOINT -u $DB_USER -p"$DB_PASS" --ssl-ca=/etc/ssl/certs/global-bundle.pem --ssl-verify-server-cert -N -s -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ecommerce_1' AND table_name='card_details';")
               if [ "$TABLE_EXISTS" -eq 0 ]; then
@@ -289,7 +267,7 @@ Resources:
           Value: !Sub '${StackNamePrefix}-frontend'
           PropagateAtLaunch: true
 
-  ScalePolicy:
+  ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
       AutoScalingGroupName: !Ref FrontendAutoScalingGroup
@@ -298,6 +276,18 @@ Resources:
       ScalingAdjustment: 1  # number of instances
       Cooldown: 300  # seconds
 
+  ScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref FrontendAutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: -1
+      Cooldown: 300
+
+  ######################
+  # Autoscaling Alarms #
+  ######################
   HighCPUAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -314,7 +304,25 @@ Resources:
       Threshold: 70  # percent
       ComparisonOperator: GreaterThanThreshold
       AlarmActions:
-        - !Ref ScalePolicy
+        - !Ref ScaleOutPolicy
+
+  LowCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${StackNamePrefix}-cpu-low'
+      AlarmDescription: "Scale in if Average CPU less than 30 percent"
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref FrontendAutoScalingGroup
+      Statistic: Average
+      Period: 60  # seconds
+      EvaluationPeriods: 10  # number of checks
+      Threshold: 30  # percent
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref ScaleInPolicy
 
   HighTrafficAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -332,9 +340,26 @@ Resources:
       Threshold: 100  # number of requests
       ComparisonOperator: GreaterThanThreshold
       AlarmActions:
-        - !Ref ScalePolicy
+        - !Ref ScaleOutPolicy
 
-  # TODO: Need a second policy. Memory usage?
+  LowTrafficAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${StackNamePrefix}-custom-in'
+      AlarmDescription: "Scale in if the number of requests drops below 50 per target per minute"
+      Namespace: AWS/ApplicationELB
+      MetricName: RequestCountPerTarget 
+      Dimensions:
+        - Name: TargetGroup
+          Value: !GetAtt FrontendTargetGroup.TargetGroupFullName
+      Statistic: Sum
+      Period: 60  # seconds
+      EvaluationPeriods: 10  # number of instances
+      Threshold: 50  # number of requests
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref ScaleInPolicy
+
   ##################################
   # Web Application Firewall (WAF) #
   ##################################
@@ -389,7 +414,7 @@ Resources:
               VendorName: AWS
               Name: AWSManagedRulesSQLiRuleSet
               RuleActionOverrides:
-                - Name: SQLi_BODY  # TODO: Ignore on registration forms only?
+                - Name: SQLi_BODY
                   ActionToUse:
                     Count: {}
           VisibilityConfig:
@@ -406,7 +431,7 @@ Resources:
               VendorName: AWS
               Name: AWSManagedRulesCommonRuleSet
               RuleActionOverrides:
-                - Name: SizeRestrictions_BODY  # Blocks requests over 8 KB, 403 Forbidden occurs with most profile pictures
+                - Name: SizeRestrictions_BODY  # Blocks requests over 8 KB, 403 Forbidden occurs with larger profile pictures
                   ActionToUse:
                     Count: {}
           VisibilityConfig:
@@ -520,6 +545,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Access Redis from App
+      GroupName: !Sub '${StackNamePrefix}-redis-sg'
       VpcId:
         Fn::ImportValue: !Sub '${StackNamePrefix}-VpcId'
 
@@ -544,7 +570,7 @@ Resources:
   RedisCacheCluster:
     Type: AWS::ElastiCache::CacheCluster
     Properties:
-      ClusterName: session-cache
+      ClusterName: !Sub '${StackNamePrefix}-session-cache'
       Engine: redis
       CacheNodeType: cache.t2.micro
       NumCacheNodes: 1

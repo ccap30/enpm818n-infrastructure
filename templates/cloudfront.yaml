@@ -33,7 +33,6 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Sid: AllowCloudFrontServicePrincipal
             Effect: Allow
             Principal:
               Service: cloudfront.amazonaws.com
@@ -95,7 +94,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: !Sub 'CDN for ${StackNamePrefix} static assets'
+        Comment: !Sub '${StackNamePrefix}-CloudFront-Distribution'
         Aliases: 
           - !Ref DomainName
         PriceClass: PriceClass_100  # Cheap, NA/EU only

@@ -58,7 +58,7 @@ Resources:
                 inputs:
                   commands:
                     - apt update -y
-                    - apt install -y apache2 php libapache2-mod-php php-mysql mariadb-server stress-ng ufw unzip
+                    - apt install -y apache2 php libapache2-mod-php php-mysql mariadb-server stress-ng ufw unzip php-redis
                     - systemctl enable apache2
                     - systemctl stop mariadb
                     - systemctl disable mariadb
@@ -68,6 +68,12 @@ Resources:
                     - sudo /tmp/aws/install
                     - echo 'DirectoryIndex index.php index.html index.cgi index.pl index.xhtml index.htm' | sudo tee /etc/apache2/mods-enabled/dir.conf
                     - sudo rm -f /var/www/html/index.html
+                    - git clone https://github.com/ccap30/818N-E_Commerce_Application
+                    - sudo mv 818N-E_Commerce_Application/* /var/www/html
+                    - sudo chown -R www-data:www-data /var/www/html
+                    - sudo chmod -R 755 /var/www/html
+                    - sudo a2enmod headers
+                    - sudo a2enmod remoteip
 
   ####################################
   # Image Recipe using latest Ubuntu #

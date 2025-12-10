@@ -24,20 +24,12 @@ Parameters:
   AllocatedStorage:
     Type: Number
     Default: "20"
-  MultiAZ:
-    Type: String
-    Default: "false"
-    AllowedValues:
-      - "true"
-      - "false"
-  # TODO: This should be true when we test and deploy the production build
 
 Resources:
 
   ##############################
   # AWS Secrets Manager Secret #
   ##############################
-
   DBPasswordSecret:
     Type: AWS::SecretsManager::Secret 
     Properties:
@@ -50,7 +42,7 @@ Resources:
           }
         GenerateStringKey: "password"
         PasswordLength: 32
-        ExcludeCharacters: '"''`@/\$;&|<>()[]{}'
+        ExcludeCharacters: '"''`@/\$;&|<>()[]{}#'
 
   DatabaseKMSKey:
     Type: AWS::KMS::Key
@@ -68,7 +60,6 @@ Resources:
   ################################
   # DB Security Group and Subnet #
   ################################
-
   DBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -107,6 +98,7 @@ Resources:
   DBInstance:
     Type: AWS::RDS::DBInstance
     Properties:
+      DBInstanceIdentifier: !Sub '${StackNamePrefix}-rds-database'
       DBName: !Ref DBName
       Engine: !Ref Engine
       EngineVersion: !Ref EngineVersion
@@ -118,7 +110,7 @@ Resources:
         Fn::Sub: '{{resolve:secretsmanager:${DBPasswordSecret}::password}}'
       VPCSecurityGroups: [!Ref DBSecurityGroup]
       DBSubnetGroupName: !Ref DBSubnetGroup
-      MultiAZ: !Ref MultiAZ
+      MultiAZ: true
       PubliclyAccessible: false
       StorageEncrypted: true
       KmsKeyId: !Ref DatabaseKMSKey
