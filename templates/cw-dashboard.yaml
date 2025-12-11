@@ -8,6 +8,11 @@ Parameters:
   AutoScalingGroupName:
     Type: String
     Default: 'enpm818n-frontend-asg'
+  # Added: We need the DB identifier to fetch RDS metrics
+  DBInstanceIdentifier:
+    Type: String
+    Description: "The instance identifier of the RDS database"
+    Default: 'enpm818n-rds-database'
 
 Resources:
   CWDashboard:
@@ -35,7 +40,7 @@ Resources:
                   }
                 },
                 { "type": "text", "x": 0, "y": 4, "width": 24, "height": 1,
-                  "properties": { "markdown": "## Key Metrics" }
+                  "properties": { "markdown": "## EC2 Instance Metrics" }
                 },
                 {
                   "type": "metric", "x": 0, "y": 5, "width": 12, "height": 6,
@@ -74,7 +79,7 @@ Resources:
                     "region": "${AWS::Region}",
                     "title": "Requests Per Target",
                     "metrics": [
-                      [ "AWS/ApplicationELB", "RequestCountPerTarget", "TargetGroup", "${FrontendTargetGroupFullName}", { "period": 60 } ]
+                      [ "AWS/ApplicationELB", "RequestCountPerTarget", "TargetGroup", "${FrontendTargetGroupFullName}", { "period": 60, "stat": "Sum" } ]
                     ]
                   }
                 },
@@ -89,6 +94,26 @@ Resources:
                       [ "AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "${ALBFullName}", { "period": 60, "color": "#d62728" } ]
                     ]
                   }
+                },
+                { "type": "text", "x": 0, "y": 17, "width": 24, "height": 1,
+                  "properties": { "markdown": "## Database Performance" }
+                },
+                {
+                  "type": "metric", "x": 0, "y": 18, "width": 24, "height": 6,
+                  "properties": {
+                    "view": "timeSeries",
+                    "stacked": false,
+                    "region": "${AWS::Region}",
+                    "title": "RDS CPU and Connections",
+                    "metrics": [
+                      [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${DBInstanceIdentifier}", { "period": 60, "yAxis": "left", "label": "CPU percentage" } ],
+                      [ ".", "DatabaseConnections", ".", ".", { "period": 60, "stat": "Sum", "yAxis": "right", "label": "Connections", "color": "#ff7f0e" } ]
+                    ],
+                    "yAxis": {
+                      "left": { "min": 0, "max": 100, "label": "CPU" },
+                      "right": { "min": 0, "label": "Connections" }
+                    }
+                  }
                 }
               ]
             }
@@ -96,3 +121,4 @@ Resources:
               Fn::ImportValue: !Sub "${StackNamePrefix}-FrontendTargetGroupFullName"
             ALBFullName:
               Fn::ImportValue: !Sub "${StackNamePrefix}-ALBFullName"
+            DBInstanceIdentifier: !Sub "${DBInstanceIdentifier}"

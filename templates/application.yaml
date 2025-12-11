@@ -416,7 +416,7 @@ Resources:
               RuleActionOverrides:
                 - Name: SQLi_BODY
                   ActionToUse:
-                    Count: {}
+                    Block: {}
           VisibilityConfig:
             CloudWatchMetricsEnabled: true
             MetricName: SQLiRules

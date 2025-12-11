@@ -51,8 +51,6 @@ function deploy_stack {
 }
 
 
-
-
 echo "There are prerequiste steps required before deploying the stacks."
 echo "This should be done on AWS. We have not automated these steps."
 echo " - Set up a Route 53 domain"
@@ -66,7 +64,6 @@ echo "========================"
 echo "  Deploying all stacks  "
 echo "========================"
 
-# Stacks should be in upward dependency order (network, then db, then app)
 
 
 #################
